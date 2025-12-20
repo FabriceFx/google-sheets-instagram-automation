@@ -88,6 +88,12 @@ Si vous avez rempli la file d'attente sans mettre de dates, vous pouvez utiliser
 * `Planification.gs` : Algorithme de distribution temporelle des posts.
 * `Outils.gs` : Fonctions utilitaires (lecture de tableau, logs, helpers).
 
+
+## 🆕 Nouveautés v2.1
+* **Support Google Drive** : Vous pouvez désormais coller des liens de partage Drive (ex: `https://drive.google.com/file/d/.../view?usp=sharing`) directement dans la colonne URL. Le script les convertit automatiquement en liens de téléchargement direct pour l'API.
+* **Vérification Pré-Publication** : Le script vérifie si l'URL est accessible publiquement (Code 200) avant de contacter Facebook, évitant les erreurs d'API inutiles.
+
+
 ## 📄 Licence
 
 Distribué sous la licence MIT. Voir le fichier `LICENSE` pour plus d'informations.
