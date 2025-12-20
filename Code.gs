@@ -1,7 +1,7 @@
 /**
  * @fileoverview Système d'automatisation de contenu Instagram pour Google Sheets.
  * @author Fabrice Faucheux
- * @version 2.0 
+ * @version 2.1 (Avec support Drive et Vérification URL)
  */
 
 // ==========================================
@@ -9,15 +9,15 @@
 // ==========================================
 
 const CONFIGURATION = {
-  VERSION_GRAPH: 'v24.0',
+  VERSION_GRAPH: 'v21.0',       // Mise à jour vers une version API récente
   FEUILLES: {
-    COMPTES: 'IG_Comptes',      // Anciennement IG_Accounts
-    FILE_ATTENTE: 'IG_File_Attente', // Anciennement IG_Queue
-    JOURNAL: 'IG_Journal',      // Anciennement IG_Log
+    COMPTES: 'IG_Comptes',
+    FILE_ATTENTE: 'IG_File_Attente',
+    JOURNAL: 'IG_Journal',
     JOURNAL_POSTS: 'IG_Journal_Publications'
   },
   DELAI_SONDAGE_MS: 10000,      // 10 secondes entre les vérifications de statut
-  MAX_TENTATIVES: 8             // Nombre max de tentatives pour le traitement vidéo
+  MAX_TENTATIVES: 20            // Augmenté pour les gros fichiers vidéo (approx 3-4 min)
 };
 
 // ==========================================
@@ -36,23 +36,22 @@ function traiterFileAttenteInstagram() {
     const maintenant = new Date();
     const tableFile = lireTableau_(CONFIGURATION.FEUILLES.FILE_ATTENTE);
     
-    // Si la feuille est vide, on arrête
     if (tableFile.lignes.length === 0) {
       console.log('Aucune ligne dans la file d\'attente.');
       return;
     }
 
-    // Récupération des comptes actifs en une seule fois (Batch optimization)
+    // Récupération des comptes actifs (Batch)
     const carteComptes = construireCarteComptes_();
-
-    // Mapping des index de colonnes pour accès rapide
+    
+    // Mapping des index pour écriture rapide
     const idx = tableFile.indexEntetes;
     const feuille = tableFile.feuille;
 
     tableFile.lignes.forEach((ligne, i) => {
-      const numeroLigne = i + 2; // +2 car en-têtes + index 0-based
+      const numeroLigne = i + 2; // +2 car headers + index 0-based
       
-      // Extraction sécurisée des données avec valeurs par défaut
+      // Extraction sécurisée des données
       const {
         queue_id: idFile = '',
         cle_compte: cleCompte = '',
@@ -60,21 +59,21 @@ function traiterFileAttenteInstagram() {
         statut = '',
         planifie_pour_local: datePrevue,
         type_media: typeMedia = 'IMAGE',
-        url_media: urlMedia = '',
+        url_media: urlMediaBrute = '', // URL originale
         legende_finale: legende = ''
       } = ligne;
 
       // 1. Validations préliminaires (Guard Clauses)
-      if (estPret.toLowerCase() !== 'oui') return;
-      if (statut && statut.toLowerCase() !== 'en attente') return;
+      if (String(estPret).toLowerCase() !== 'oui') return;
+      if (statut && String(statut).toLowerCase() !== 'en attente') return;
       if (estLigneVide_(ligne)) return;
 
       // 2. Vérification de l'horaire
       if (datePrevue instanceof Date) {
         const diffTemps = datePrevue.getTime() - maintenant.getTime();
-        // Si prévu dans plus de 30 secondes, on attend
-        if (diffTemps > 30000) {
-          console.log(`Ligne ${numeroLigne} : Planifié dans le futur (${datePrevue}). Ignoré.`);
+        // Si prévu dans plus de 2 minutes, on attend
+        if (diffTemps > 120000) {
+          console.log(`Ligne ${numeroLigne} : Planifié plus tard (${datePrevue}). Ignoré.`);
           return;
         }
       }
@@ -83,15 +82,30 @@ function traiterFileAttenteInstagram() {
       journaliserAction_(cleCompte, idFile, 'traitementLigne', 'EN_COURS', '', '', '', '');
 
       // 3. Récupération du compte
-      const compte = carteComptes[cleCompte.trim()];
+      const compte = carteComptes[String(cleCompte).trim()];
       if (!compte) {
         marquerErreur_(feuille, numeroLigne, idx, "Compte introuvable ou inactif");
         return;
       }
 
-      if (!urlMedia) {
+      if (!urlMediaBrute) {
         marquerErreur_(feuille, numeroLigne, idx, "URL du média manquante");
         return;
+      }
+
+      // --- NOUVEAUTÉ V2.1 : Traitement et Validation de l'URL ---
+      
+      // A. Conversion Lien Drive -> Lien Direct
+      const urlMedia = convertirLienDriveEnDirect_(urlMediaBrute);
+      
+      // B. Vérification Accessibilité (Est-ce que le lien fonctionne ?)
+      const estAccessible = verifierAccessibiliteUrl_(urlMedia);
+      if (!estAccessible) {
+         const msg = "URL média inaccessible ou privée (Erreur 403/404)";
+         console.error(msg);
+         marquerErreur_(feuille, numeroLigne, idx, msg);
+         journaliserAction_(cleCompte, idFile, 'verificationUrl', 'ECHEC', '404/403', urlMedia, '', msg);
+         return; // On arrête là pour cette ligne
       }
 
       // Mise à jour du statut dans le Sheet
@@ -100,7 +114,9 @@ function traiterFileAttenteInstagram() {
       // 4. Exécution de la publication
       let resultat;
       try {
-        if (typeMedia.toUpperCase() === 'VIDEO' || ligne.type_plateforme === 'IG_REEL') {
+        const estReel = (String(typeMedia).toUpperCase() === 'VIDEO' || ligne.type_plateforme === 'IG_REEL');
+        
+        if (estReel) {
           resultat = publierVideo_(compte, urlMedia, legende, idFile);
         } else {
           resultat = publierImage_(compte, urlMedia, legende, idFile);
@@ -111,17 +127,18 @@ function traiterFileAttenteInstagram() {
           marquerSucces_(feuille, numeroLigne, idx, resultat);
           journaliserPublication_(ligne, resultat);
         } else {
-          throw new Error(`Échec API: ${JSON.stringify(resultat)}`);
+          // Erreur retournée par l'API sans exception
+          const details = resultat.erreur ? JSON.stringify(resultat.erreur) : 'Erreur inconnue';
+          throw new Error(`Échec API: ${details}`);
         }
 
       } catch (erreur) {
-        const msgErreur = `Exception lors de la publication : ${erreur.message}`;
+        const msgErreur = `Exception publication : ${erreur.message}`;
         console.error(msgErreur);
         marquerErreur_(feuille, numeroLigne, idx, msgErreur);
         journaliserAction_(cleCompte, idFile, 'traitementLigne', 'EXCEPTION', '', '', '', msgErreur);
       }
     });
-
   } catch (e) {
     console.error(`Erreur critique dans le répartiteur : ${e.toString()}`);
   }
@@ -144,7 +161,6 @@ function traiterFileAttenteInstagram() {
  */
 function publierImage_(compte, urlImage, legende, idFile) {
   const endpoint = `https://graph.facebook.com/${CONFIGURATION.VERSION_GRAPH}/${compte.idBusinessIg}/media`;
-  
   console.log(`Création conteneur IMAGE pour ${compte.cleCompte}`);
 
   // 1. Création du conteneur
@@ -157,7 +173,7 @@ function publierImage_(compte, urlImage, legende, idFile) {
     },
     muteHttpExceptions: true
   });
-
+  
   const json = JSON.parse(reponse.getContentText());
   
   if (!json.id) {
@@ -177,10 +193,9 @@ function publierImage_(compte, urlImage, legende, idFile) {
  */
 function publierVideo_(compte, urlVideo, legende, idFile) {
   const endpoint = `https://graph.facebook.com/${CONFIGURATION.VERSION_GRAPH}/${compte.idBusinessIg}/media`;
-
   console.log(`Création conteneur REELS pour ${compte.cleCompte}`);
 
-  // 1. Création du conteneur (Note: media_type: 'REELS')
+  // 1. Création du conteneur (media_type: 'REELS')
   const reponse = UrlFetchApp.fetch(endpoint, {
     method: 'post',
     payload: {
@@ -191,7 +206,7 @@ function publierVideo_(compte, urlVideo, legende, idFile) {
     },
     muteHttpExceptions: true
   });
-
+  
   const json = JSON.parse(reponse.getContentText());
 
   if (!json.id) {
@@ -219,7 +234,7 @@ function publierVideo_(compte, urlVideo, legende, idFile) {
  */
 function finaliserPublication_(compte, idCreation, idFile) {
   const endpoint = `https://graph.facebook.com/${CONFIGURATION.VERSION_GRAPH}/${compte.idBusinessIg}/media_publish`;
-
+  
   const reponse = UrlFetchApp.fetch(endpoint, {
     method: 'post',
     payload: {
@@ -228,7 +243,7 @@ function finaliserPublication_(compte, idCreation, idFile) {
     },
     muteHttpExceptions: true
   });
-
+  
   const json = JSON.parse(reponse.getContentText());
 
   if (!json.id) {
@@ -255,7 +270,7 @@ function attendreTraitementMedia_(idCreation, compte) {
     const reponse = UrlFetchApp.fetch(endpoint, { muteHttpExceptions: true });
     const json = JSON.parse(reponse.getContentText());
     const codeStatut = json.status_code || json.status;
-
+    
     console.log(`Sondage ${i+1}/${CONFIGURATION.MAX_TENTATIVES} pour ${idCreation}: ${codeStatut}`);
 
     if (codeStatut === 'FINISHED') return { estPret: true };
