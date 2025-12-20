@@ -128,29 +128,56 @@ function journaliserPublication_(ligneDonnees, resultat) {
   ]);
 }
 
+// ==========================================
+// AIDES : VALIDATION & CONVERSION URL
+// ==========================================
+
 /**
- * Convertit un lien de partage Google Drive (View) en lien de téléchargement direct.
- * Indispensable car l'API Meta ne peut pas lire les pages HTML de la visionneuse Drive.
- * @param {string} url - L'URL brute (Drive, Dropbox ou lien direct).
- * @return {string} L'URL formatée pour l'export direct si c'est du Drive, sinon l'URL originale.
+ * Convertit un lien Drive (View) en lien de téléchargement direct.
+ * @param {string} url - L'URL brute.
+ * @return {string} L'URL directe compatible API Meta.
  */
 function convertirLienDriveEnDirect_(url) {
   if (!url) return '';
   const urlStr = String(url).trim();
-
-  // Détection des domaines Google Drive
   if (urlStr.includes('drive.google.com') || urlStr.includes('docs.google.com')) {
-    // Regex pour capturer l'ID du fichier (chaine de >25 caractères alphanumériques)
-    // Fonctionne pour /file/d/ID/view, id=ID, etc.
     const regexId = /[-\w]{25,}/;
     const match = urlStr.match(regexId);
-    
     if (match && match[0]) {
-      // On retourne le format "Download" que l'API Meta accepte
       return `https://drive.google.com/uc?export=download&id=${match[0]}`;
     }
   }
-
-  // Si ce n'est pas du Drive, on retourne l'URL telle quelle
   return urlStr;
+}
+
+/**
+ * Vérifie si l'URL est accessible publiquement (Code 200).
+ * Gère le cas des fichiers trop volumineux pour GAS (considérés comme existants).
+ * @param {string} url - L'URL à tester.
+ * @return {boolean} True si accessible, False sinon.
+ */
+function verifierAccessibiliteUrl_(url) {
+  try {
+    // On tente de récupérer juste les en-têtes ou le début pour ne pas charger tout le fichier
+    // Note : UrlFetchApp ne supporte pas toujours bien HEAD, on fait un fetch standard
+    const reponse = UrlFetchApp.fetch(url, {
+      muteHttpExceptions: true,
+      followRedirects: true
+    });
+    
+    const code = reponse.getResponseCode();
+    if (code >= 200 && code < 300) return true;
+    
+    console.warn(`URL inaccessible (Code ${code}) : ${url}`);
+    return false;
+
+  } catch (e) {
+    // Si l'erreur est "File too large", cela signifie que le fichier existe mais dépasse 50Mo (limite GAS).
+    // Pour l'API Instagram, c'est bon signe (le fichier est là), donc on retourne true.
+    if (e.message.includes("limit exceeded") || e.message.includes("trop volumineux")) {
+      return true;
+    }
+    console.error(`Erreur vérification URL : ${e.message}`);
+    return false;
+  }
 }
