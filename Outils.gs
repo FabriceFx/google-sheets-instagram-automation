@@ -127,3 +127,30 @@ function journaliserPublication_(ligneDonnees, resultat) {
     resultat.idMedia
   ]);
 }
+
+/**
+ * Convertit un lien de partage Google Drive (View) en lien de téléchargement direct.
+ * Indispensable car l'API Meta ne peut pas lire les pages HTML de la visionneuse Drive.
+ * @param {string} url - L'URL brute (Drive, Dropbox ou lien direct).
+ * @return {string} L'URL formatée pour l'export direct si c'est du Drive, sinon l'URL originale.
+ */
+function convertirLienDriveEnDirect_(url) {
+  if (!url) return '';
+  const urlStr = String(url).trim();
+
+  // Détection des domaines Google Drive
+  if (urlStr.includes('drive.google.com') || urlStr.includes('docs.google.com')) {
+    // Regex pour capturer l'ID du fichier (chaine de >25 caractères alphanumériques)
+    // Fonctionne pour /file/d/ID/view, id=ID, etc.
+    const regexId = /[-\w]{25,}/;
+    const match = urlStr.match(regexId);
+    
+    if (match && match[0]) {
+      // On retourne le format "Download" que l'API Meta accepte
+      return `https://drive.google.com/uc?export=download&id=${match[0]}`;
+    }
+  }
+
+  // Si ce n'est pas du Drive, on retourne l'URL telle quelle
+  return urlStr;
+}
