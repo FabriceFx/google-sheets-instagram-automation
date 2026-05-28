@@ -1,9 +1,15 @@
 # Google Sheets Instagram Automation
 
+
+[🇫🇷 Version Française](#-version-française) | [🇬🇧 English Version](#-english-version)
+
 ![License MIT](https://img.shields.io/badge/License-MIT-blue.svg)
 ![Platform](https://img.shields.io/badge/Platform-Google%20Apps%20Script-green)
 ![Runtime](https://img.shields.io/badge/Google%20Apps%20Script-V8-green)
 ![Author](https://img.shields.io/badge/Auteur-Fabrice%20Faucheux-orange)
+
+## 🇫🇷 Version Française
+
 
 Une solution professionnelle et robuste pour automatiser la planification et la publication de contenus (Images et Reels) sur Instagram directement depuis Google Sheets, en utilisant Google Apps Script et l'API Graph de Meta.
 
@@ -130,3 +136,12 @@ La sécurité repose sur un **Jeton Utilisateur Longue Durée** (valide 60 jours
 Distribué sous la licence MIT. Voir le fichier `LICENSE` pour plus d'informations.
 
 Copyright (c) 2025 Fabrice Faucheux
+
+
+---
+## 🇬🇧 English Version
+
+> English translation coming soon.
+
+---
+<p align="center"><a href="https://faucheux.bzh" target="_blank" style="color: inherit; text-decoration: none;">&lt;&gt; par Fabrice Faucheux</a></p>
